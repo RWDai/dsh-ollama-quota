@@ -165,10 +165,14 @@ host 半用 profile 里的 `OLLAMA_API_KEY` 并发抓这三个接口，压成 60
 
 失败时是 `{ ok: false, code, message, providers }`，`code` 取 `missing-key` /
 `unauthorized` / `upstream` / `upstream-timeout` / `network` / `upstream-format` /
-`internal`。
+`internal`。准入被拒时是 HTTP 401/403 + `code: "forbidden"`（额度条显示「无权读取额度」）。
 
-只接受本机连接（`127.0.0.1` / `::1`），非 GET/HEAD 返回 405，`cache-control: no-store`,
-且**永不把 key 发给浏览器**。
+准入：本机连接（`127.0.0.1` / `::1`）直接放行；其它来源必须通过 DSH 的
+`connection.requestRejection()`——Host/Origin 栅栏 + 浏览器会话 cookie（`dsh web`
+启动行打印的带 `?token=` 地址换来的登录态）。所以把 `dsh web` 绑到局域网地址后，
+用正常方式打开的页面能读，未登录或跨站的请求拿 401/403。没装 `client-connection`
+的 profile 退回只认本机。非 GET/HEAD 返回 405，`cache-control: no-store`，且
+**永不把 key 发给浏览器**。
 
 ## 排错
 
@@ -178,6 +182,7 @@ host 半用 profile 里的 `OLLAMA_API_KEY` 并发抓这三个接口，压成 60
 | 行名只显示 `ollama` | profile 缺 `displayName: Ollama Cloud`（插件预置的带，手写的要补） |
 | 端点返回 `missing-key` | key 还没存上：重贴，或写进 `~/.dsh/.credentials.yaml` |
 | 端点返回 `unauthorized` | key 失效，重新生成 |
+| 额度条显示「无权读取额度」 | 浏览器会话没通过校验：用 `dsh web` 启动行打印的**带 `?token=` 的地址**重新打开页面；旧版本会把这种 403 误报成「无法连接 ollama.com」 |
 | 端点正常但没有额度条 | 当前会话供应商不是 ollama（选了别的模型），或页面没刷新 |
 | 页面样式/数据没变 | 插件**代码**改动必须重启 `dsh web`；只有 patch 配置是热更的 |
 
@@ -214,7 +219,7 @@ ln -s ~/.dsh/profiles/node_modules ~/src/dsh-ollama-quota/node_modules   # 让 p
 
 ```bash
 npm test                     # 单测 + 客户端冒烟（CI 跑这个）
-node --test test/*.test.mjs  # metrics 纯函数 11 个 + 供应商预置 5 个
+node --test test/*.test.mjs  # 24 个：metrics 11 + 供应商预置 5 + 端点准入 6 + 打包 2
 node test/host.smoke.mjs     # 打真实 Ollama 接口（读 ~/.dsh/.credentials.yaml 的 key）
 node test/client.smoke.mjs   # 浏览器 bundle 冒烟：loader 契约 / 闸门 / 折叠展开 / 错误态
 ```

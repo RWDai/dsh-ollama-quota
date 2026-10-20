@@ -225,6 +225,22 @@ assert.match(errorDock, /card\.unauthorized/);
 assert.doesNotMatch(errorDock, /ollamaQuota_detail/, 'no detail area without data');
 noPlaceholders(errorDock, 'error dock');
 
+// 准入失败：401/403 是「会话没通过校验」，不能冒充 network 让用户去查网络。
+// 旧版把任何非 2xx 都标成 network，绑局域网地址时额度条永远显示「无法连接
+// ollama.com」，而宿主机到上游其实完全正常。
+const okFetch = globalThis.fetch;
+globalThis.fetch = async () => ({ ok: false, status: 403, json: async () => ({}) });
+bundle.store.patch({ expanded: true, status: 'ready', payload: undefined, error: undefined });
+await bundle.refresh({ force: true });
+await settle();
+assert.equal(bundle.store.get().status, 'error');
+assert.equal(bundle.store.get().error.code, 'forbidden', '403 must map to code=forbidden');
+const forbiddenDock = renderToStaticMarkup(React.createElement(dock.component, { t }));
+assert.match(forbiddenDock, /card\.forbidden/);
+assert.doesNotMatch(forbiddenDock, /card\.network/, '403 must not be reported as a network failure');
+noPlaceholders(forbiddenDock, 'forbidden dock');
+globalThis.fetch = okFetch;
+
 // CSS 里不能出现 calc 乘法（非法语法会让整条声明失效）。
 assert.doesNotMatch(styles[0].textContent, /calc\([^)]*\*/, 'no calc multiplication in the stylesheet');
 assert.match(styles[0].textContent, /ollamaQuota_root/);
