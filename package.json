@@ -1,6 +1,6 @@
 {
   "name": "dsh-ollama-quota",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": false,
   "description": "DSH 插件：Ollama Cloud 套餐额度面板（剩余额度、使用百分比、token 用量、到期时间、用量节奏），挂在输入框上方 dock",
   "type": "module",
@@ -27,11 +27,7 @@
     }
   },
   "files": [
-    "lib/index.js",
-    "lib/client.js",
-    "lib/metrics.js",
-    "README.md",
-    "LICENSE"
+    "lib"
   ],
   "peerDependencies": {
     "@deepseek-ai/dsh-credentials": ">=0.1.0-rc.6",
