@@ -189,11 +189,15 @@ assert.equal(bundle.store.get().status, 'ready');
 const collapsed = renderToStaticMarkup(React.createElement(dock.component, { t }));
 assert.match(collapsed, /ollamaQuota_root/);
 assert.doesNotMatch(collapsed, /ollamaQuota_detail/, 'detail must stay collapsed');
+assert.equal((collapsed.match(/<svg/g) ?? []).length, 2, 'lead glyph + collapse chevron');
+assert.match(collapsed, /M12 10L8\.70711 6\.70711/, 'collapsed dock uses the native up chevron');
+assert.doesNotMatch(collapsed, /<strong>/, 'summary is plain tertiary text, like the native docks');
 
 // 展开态：点标题展开（等价于 store.expanded=true）。
 bundle.store.patch({ expanded: true });
 const expandedHtml = renderToStaticMarkup(React.createElement(dock.component, { t }));
 assert.match(expandedHtml, /ollamaQuota_detail/);
+assert.match(expandedHtml, /M4 6L7\.29289 9\.29289/, 'expanded dock uses the native down chevron');
 assert.match(expandedHtml, /\$59\.89/);
 assert.match(expandedHtml, /11-20/);
 assert.match(expandedHtml, /8\.96M/);
@@ -244,6 +248,13 @@ globalThis.fetch = okFetch;
 // CSS 里不能出现 calc 乘法（非法语法会让整条声明失效）。
 assert.doesNotMatch(styles[0].textContent, /calc\([^)]*\*/, 'no calc multiplication in the stylesheet');
 assert.match(styles[0].textContent, /ollamaQuota_root/);
+// 表面材质跟原生 dock 一致：半透明菜单 + 模糊 + elevation 阴影 + 大圆角，
+// 而不是旧版不透明的 tip 底 + 1px 边框 + 12px 圆角。
+assert.match(styles[0].textContent, /background:var\(--dsw-specific-menu\)/);
+assert.match(styles[0].textContent, /backdrop-filter:var\(--dsw-menu-backdrop-filter\)/);
+assert.match(styles[0].textContent, /box-shadow:var\(--dsw-elevation-panel\)/);
+assert.match(styles[0].textContent, /border-radius:var\(--dsw-radius-lg\)/);
+assert.doesNotMatch(styles[0].textContent, /var\(--dsw-specific-tip\)/, 'do not use the opaque tip surface');
 
 // 供应商闸门：目录快照里当前供应商不在 providers 列表时整条不渲染。
 const snapshotStore = (provider) => {
