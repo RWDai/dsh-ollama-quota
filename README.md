@@ -1,5 +1,8 @@
 # dsh-ollama-quota
 
+[![ci](https://github.com/RWDai/dsh-ollama-quota/actions/workflows/ci.yml/badge.svg)](https://github.com/RWDai/dsh-ollama-quota/actions/workflows/ci.yml)
+[![license: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
 DSH 插件：在输入框上方挂一条 **Ollama Cloud 套餐额度 bar**，展开后是明细面板——
 剩余额度、使用百分比、本期 token 用量（输入 / 缓存命中 / 输出）、到期时间，以及
 「按到期日算，现在是用多了还是用少了」的节奏预测。
