@@ -67,14 +67,20 @@ test('写失败只告警，不抛错', async () => {
   assert.match(warn[1], /provisionProvider: false/, '告警要告诉用户怎么关掉');
 });
 
-test('settings 服务缺失时静默跳过', async () => {
+test('settings 服务始终缺席：重试后只留一条告警，绝不抛错', async () => {
+  let polls = 0;
+  const logs = [];
   const ctx = {
-    logs: [],
-    logger: { info: () => {}, warn: (m) => ctx.logs.push(m), debug: () => {} },
-    get: () => undefined,
+    logger: { info: () => {}, debug: () => {}, warn: (message) => logs.push(message) },
+    get: () => {
+      polls += 1;
+      return undefined;
+    },
   };
   await provisionProvider(ctx);
-  assert.equal(ctx.logs.length, 0, '没有 settings 服务不是用户的问题，不该报警');
+  assert.equal(polls, 3, '应该重试三次再放弃');
+  assert.equal(logs.length, 1, '只报一次，不要刷屏');
+  assert.match(logs[0], /等不到 llm-pi-ai 的 settings 分节/);
 });
 
 test('preset 自身满足 llm-pi-ai 的 profile 约束', () => {

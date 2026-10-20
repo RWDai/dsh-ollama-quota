@@ -86,7 +86,10 @@ profile、装包、注册配置并校验：
 填 Provider ID、端点、协议，还得逐个补模型和推理档位。本插件把这件事做掉了：
 
 - 首次加载时，如果 `llm-pi-ai` 分节里**还解析不到** `ollama`，就把
-  `lib/preset.js` 里的 profile 通过 `ctx.settings.mutate` 写进 settings；
+  `lib/preset.js` 里的 profile 通过 `ctx.settings.mutate` 写进 settings 层。
+  本版本的 settings 文档就是 profile 的 `cordis.patch.yml`（`dsh-settings` +
+  config-editor 那一套），所以写入结果等价于手工加一条 `- id: llm-pi-ai` 覆盖条目；
+  Models 页后续的改动也落在同一处，两边不会打架；
 - 写入内容：`baseURL: https://ollama.com/v1`、`api: openai-responses`、
   `apiKeyEnv: OLLAMA_API_KEY`、22 个模型（每个带 `contextWindow`、能思考的带
   `reasoningEfforts`、真能看图的带 `input: [text, image]`）；
