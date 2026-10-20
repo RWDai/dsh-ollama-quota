@@ -105,8 +105,13 @@ profile、装包、注册配置并校验：
 
 两个已知的观感问题，都不是 bug：
 
-- Models 页里这条路由会带 **自定义** 标签——那是 pi-ai catalog 里确实没有 ollama
-  这个键，DSH 如实标注；字段仍然是全预填的。
+- **「第三方模型提供商」下拉框里永远不会有 ollama。** 那个列表来自 pi-ai 内置
+  catalog（`getBuiltinProviders()` 是 pi-ai 生成期写死的静态列表），插件没有注册
+  入口，硬塞进去还会和 `llm-pi-ai` 自己的目录注册冲突（`DUPLICATE_DIRECTORY`）。
+  插件能做的是把 ollama 变成一条**已配置的供应商行**：字段全预填，只剩贴 key。
+- 那条行会带 **自定义** 标签——同样是 pi-ai catalog 里没有 ollama 这个键，DSH 如实
+  标注；字段仍然是全预填的。行的显示名来自 profile 的 `displayName`（预置里是
+  `Ollama Cloud`），手写 patch 时记得带上，否则只会显示路由 id `ollama`。
 - 预置只在「还解析不到 ollama」时发生。你要是像现在这样在 `cordis.patch.yml`
   里手写了供应商，插件会跳过；想让配置回到 settings（从而能在页面上改），删掉
   patch 里的 `providers.ollama` 再重启即可。
