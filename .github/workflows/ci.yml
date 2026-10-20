@@ -1,0 +1,26 @@
+# 源码分发没有构建产物，CI 只做测试门禁：干净环境里 npm ci + 跑单测与客户端冒烟。
+# host 冒烟（test/host.smoke.mjs）要真实 OLLAMA_API_KEY 和网络，故意不进 CI。
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node: [20, 22]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - run: node --test test/*.test.mjs
+      - run: node test/client.smoke.mjs

@@ -38,7 +38,10 @@
     "@deepseek-ai/schemastery": ">=3.18.1"
   },
   "scripts": {
-    "test": "node --test test/*.test.mjs"
+    "test": "node --test test/*.test.mjs && node test/client.smoke.mjs",
+    "test:unit": "node --test test/*.test.mjs",
+    "test:client": "node test/client.smoke.mjs",
+    "test:live": "node test/host.smoke.mjs"
   },
   "license": "MIT",
   "keywords": [
@@ -58,5 +61,9 @@
   "homepage": "https://github.com/RWDai/dsh-ollama-quota#readme",
   "bugs": {
     "url": "https://github.com/RWDai/dsh-ollama-quota/issues"
+  },
+  "devDependencies": {
+    "react": "18.3.1",
+    "react-dom": "18.3.1"
   }
 }

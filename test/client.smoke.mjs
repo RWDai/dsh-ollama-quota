@@ -10,8 +10,32 @@
 
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
 
-const requireFromProfile = createRequire('/home/heletian/.dsh/profiles/web/package.json');
+const requireFromRepo = createRequire(import.meta.url);
+
+/**
+ * 解析 react / react-dom：优先仓库自己的 node_modules（CI 用），
+ * 没有就回退到本机 DSH profile 的 node_modules（开发时没装 devDeps 也能跑）。
+ * @param {string} specifier 模块说明符。
+ * @returns {unknown} 模块导出。
+ */
+function loadModule(specifier) {
+  try {
+    return requireFromRepo(specifier);
+  } catch {
+    const home = process.env.DSH_HOME ?? join(homedir(), '.dsh');
+    for (const anchor of [join(home, 'profiles/web/package.json'), join(home, 'profiles/package.json')]) {
+      try {
+        return createRequire(anchor)(specifier);
+      } catch {
+        // 换下一个候选锚点
+      }
+    }
+  }
+  throw new Error(`cannot resolve ${specifier}: run "npm install" in this repo, or install DSH locally`);
+}
 
 /** 最小 window 替身。 */
 globalThis.window = globalThis;
@@ -103,7 +127,7 @@ globalThis.__ModuleLoader__ = {
     assert.equal(id, 'dsh-ollama-quota');
     bundle = factory((spec) => {
       assert.equal(spec, 'react');
-      return requireFromProfile('react');
+      return loadModule('react');
     });
   },
 };
@@ -138,8 +162,8 @@ assert.equal(registered[0].def.id, 'ollama-quota');
 assert.equal(registered[0].def.order, 10);
 assert.equal(styles.length, 1, 'CSS must be injected exactly once');
 
-const React = requireFromProfile('react');
-const { renderToStaticMarkup } = requireFromProfile('react-dom/server');
+const React = loadModule('react');
+const { renderToStaticMarkup } = loadModule('react-dom/server');
 
 /** 文案函数替身：无参回显 key，带参回显 key+JSON，便于断言参数被填上。 */
 const t = (key, params) => (params === undefined ? key : `${key}${JSON.stringify(params)}`);
