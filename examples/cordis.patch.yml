@@ -9,3 +9,6 @@
           - ollama
         refreshMs: 60000
         paceWarnPct: 5
+        # 首次加载时把 ollama 供应商预设（端点/协议/模型/推理档位/vision）
+        # 写进 settings，已存在则跳过；设成 false 可关掉这次写入。
+        provisionProvider: true
