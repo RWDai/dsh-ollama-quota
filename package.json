@@ -1,0 +1,62 @@
+{
+  "name": "dsh-ollama-quota",
+  "version": "0.1.0",
+  "private": false,
+  "description": "DSH 插件：Ollama Cloud 套餐额度面板（剩余额度、使用百分比、token 用量、到期时间、用量节奏），挂在输入框上方 dock",
+  "type": "module",
+  "main": "lib/index.js",
+  "exports": {
+    ".": {
+      "default": "./lib/index.js"
+    },
+    "./client": {
+      "default": "./lib/client.js"
+    },
+    "./metrics": {
+      "default": "./lib/metrics.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "dsh": {
+    "client": {
+      "platform": "web",
+      "inject": [
+        "@deepseek-ai/dsh-client-runtime",
+        "@deepseek-ai/dsh-client-locale"
+      ]
+    }
+  },
+  "files": [
+    "lib/index.js",
+    "lib/client.js",
+    "lib/metrics.js",
+    "README.md",
+    "LICENSE"
+  ],
+  "peerDependencies": {
+    "@deepseek-ai/dsh-credentials": ">=0.1.0-rc.6",
+    "@deepseek-ai/schemastery": ">=3.18.1"
+  },
+  "scripts": {
+    "test": "node --test test/*.test.mjs"
+  },
+  "license": "MIT",
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "ollama",
+    "quota",
+    "usage"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/RWDai/dsh-ollama-quota.git"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "homepage": "https://github.com/RWDai/dsh-ollama-quota#readme",
+  "bugs": {
+    "url": "https://github.com/RWDai/dsh-ollama-quota/issues"
+  }
+}

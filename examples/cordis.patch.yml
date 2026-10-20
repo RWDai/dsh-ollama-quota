@@ -1,0 +1,11 @@
+# 把本插件挂进某个 profile 的 cordis.patch.yml（放在文件末尾的根级 insert 里）。
+# 生效供应商由 config.providers 控制：会话切到其它供应商时 dock 不显示、也不轮询。
+- insert:
+    - id: ollama-quota
+      name: dsh-ollama-quota
+      config:
+        # 账期内的供应商 id（llm provider 名，不是模型名）
+        providers:
+          - ollama
+        refreshMs: 60000
+        paceWarnPct: 5
