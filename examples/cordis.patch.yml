@@ -9,6 +9,9 @@
           - ollama
         refreshMs: 60000
         paceWarnPct: 5
+        # 模型价目表缓存（毫秒）：价表抓自 ollama.com/pricing 的 HTML（官方没有
+        # 价格 JSON 接口），失败沿用旧表。选填，默认 43200000（12 小时）。
+        # priceTtlMs: 43200000
         # 首次加载时把 ollama 供应商预设（端点/协议/模型/推理档位/vision）
         # 写进 settings，已存在则跳过；设成 false 可关掉这次写入。
         provisionProvider: true

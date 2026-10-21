@@ -42,6 +42,16 @@ const USAGE = {
   },
 };
 
+/** pricing 页替身：价目表解析器的最小样本（一个模型、无谷时价）。 */
+const PRICING_HTML =
+  '<section id="model-pricing"><table><tr>' +
+  '<td><a href="/library/glm-5.3-flash" class="hover:underline">glm-5.3-flash</a></td>' +
+  '<td>$0.15</td><td>$0.03</td><td>$0.50</td>' +
+  '</tr></table></section>';
+
+/** 采集一次需要打的全部上游端点（balance + usage + me + pricing）。 */
+const UPSTREAM_CALLS = 4;
+
 /**
  * 一个 JSON 200 响应替身。
  * @param {unknown} body JSON 体。
@@ -52,7 +62,7 @@ function jsonResponse(body) {
 }
 
 /**
- * 装上只认三个上游端点的 fetch 替身，并记录每一次出站请求。
+ * 装上只认四个上游地址的 fetch 替身，并记录每一次出站请求。
  * @returns {{calls: Array<{url: string, init: object}>, restore: () => void}} 调用记录与还原函数。
  */
 function installUpstream() {
@@ -65,6 +75,9 @@ function installUpstream() {
     if (pathname === '/api/balance') return jsonResponse(BALANCE);
     if (pathname === '/api/usage') return jsonResponse(USAGE);
     if (pathname === '/api/me') return jsonResponse({ Plan: 'pro' });
+    if (pathname === '/pricing') {
+      return { ok: true, status: 200, text: async () => PRICING_HTML };
+    }
     throw new Error(`unexpected upstream request: ${url}`);
   };
   return {
@@ -203,7 +216,11 @@ test('loopback is admitted without the optional connection service', async () =>
       assert.deepEqual(payload.providers, ['ollama']);
       assert.equal(payload.plan, 'pro');
       assert.equal(payload.remainingUsd, 59.5);
-      assert.equal(upstream.calls.length, 3, 'an admitted read must reach all three upstream endpoints');
+      assert.equal(upstream.calls.length, UPSTREAM_CALLS, 'an admitted read must reach all four upstream endpoints');
+      // 价目页是公开页面：请求不能带鉴权头。
+      const pricingCall = upstream.calls.find((call) => call.url.endsWith('/pricing'));
+      assert.ok(pricingCall, 'the admitted read must also fetch the price book');
+      assert.equal(pricingCall.init.headers.authorization, undefined, 'the price page is public: never send the key');
       assert.ok(!res.body.includes(API_KEY), 'response must not contain the key');
     } finally {
       upstream.restore();
@@ -256,8 +273,9 @@ test('an authenticated browser session is admitted and still never sees the key'
     assert.equal(payload.ok, true);
     assert.equal(payload.plan, 'pro');
     assert.equal(connection.seen.length, 1);
-    assert.equal(upstream.calls.length, 3);
-    for (const { init } of upstream.calls) {
+    assert.equal(upstream.calls.length, UPSTREAM_CALLS);
+    for (const { init, url } of upstream.calls) {
+      if (url.endsWith('/pricing')) continue; // 公开页面不带 key（上面单独断言过）
       assert.equal(init.headers.authorization, `Bearer ${API_KEY}`, 'the key travels only in the outbound header');
     }
     assert.ok(!res.body.includes(API_KEY), 'response must not contain the key');
@@ -301,7 +319,7 @@ test('only GET/HEAD pass the method guard, and HEAD carries no body', async () =
     assert.equal(head.statusCode, 200);
     assert.equal(head.body, '', 'HEAD must not carry a body');
     assert.ok(Number(head.headers['content-length']) > 0, 'HEAD should advertise the GET body length');
-    assert.equal(upstream.calls.length, 3);
+    assert.equal(upstream.calls.length, UPSTREAM_CALLS);
   } finally {
     upstream.restore();
   }

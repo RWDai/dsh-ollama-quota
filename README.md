@@ -4,8 +4,9 @@
 [![license: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 DSH 插件：在输入框上方挂一条 **Ollama Cloud 额度条**，点开是明细——剩余额度、使用
-百分比、本期 token（输入 / 缓存命中 / 输出）、到期时间，以及「按到期日算是用多了
-还是用少了」的节奏预测。
+百分比、本期 token（输入 / 缓存命中 / 输出）、到期时间、「按到期日算是用多了还是
+用少了」的节奏预测，以及**计费时段**（峰 / 谷 + 切换倒计时）、**当前模型的目录价**
+（谷时价自动换算）和**按模型的用量与效率**（缓存命中率、实测每百万 token 成本）。
 
 ```
 ▍Ollama 额度   $59.76 / $60.00 · 0.4% · 节奏正常 · 24.56M tok · 11-20 到期   ⌄
@@ -117,17 +118,68 @@ curl -s http://127.0.0.1:3080/plugin/ollama-quota/state | head -c 120
 
 ## 工作原理
 
-两个只读数据流，都不经过 `/api/*` 网关：
+两个数据来源（都只读，都不经过 `/api/*` 网关）：
 
 | 上游接口 | 用途 |
 | --- | --- |
 | `GET /api/balance` | 剩余额度、总额度、账期起止（**剩余额度的唯一真相**） |
-| `GET /api/usage?range=30d` | 请求数、金额、输入/缓存/输出 token，按日分桶 |
+| `GET /api/usage?range=30d&group_by=model` | 请求数、金额、输入/缓存/输出 token，按日分桶 + **按模型分组**（top 10，其余进 `remainder`） |
 | `POST /api/me` | 套餐名（`pro` / `free` …） |
+| `GET /pricing`（HTML） | 模型价目表：input / cached / output 的峰时价与谷时价。官方**没有**价格 JSON 接口（`/api/tags`、`/api/show` 里都没有），这一份从页面表格解析，长缓存（默认 12h），失败沿用旧表 |
 
-host 半用 profile 里的 `OLLAMA_API_KEY` 并发抓这三个接口，压成 60s TTL 缓存，通过
+host 半用 profile 里的 `OLLAMA_API_KEY` 并发抓前三个接口，压成 60s TTL 缓存，通过
 `/plugin/ollama-quota/state` 交给浏览器半；浏览器每 60s 拉一次（页面不可见、供应商
-不匹配、条未挂载时不拉）。
+不匹配、条未挂载时不拉）。价目表独立缓存、独立退避，抓不到只是明细里少目录价，
+额度数字照常。
+
+### 计费时段与模型价格
+
+峰谷规则来自 [pricing 页原文](https://ollama.com/pricing)：**峰时＝工作日
+12:00–18:00 UTC，其余都是谷时**（含整个周末）；计费口径是 UTC，与浏览器时区无关。
+host 半把这个判定连同下次切换时刻（`peak.nextChangeAt`）一起下发，明细页显示
+「谷时 · X 小时后转峰时」这类倒计时。
+
+模型价格按 id 匹配价目表：`usage` 的分组名和会话模型 id 都可能带变体 tag
+（`deepseek-v4.1-flash:1017`），匹配规则是「精确等值，其次最长前缀 + 冒号边界」，
+所以 `gpt-oss:20b` 不会误配 `gpt-oss:120b`。不是所有模型都有谷时价（目前只有
+deepseek 两档 −50%）：没谷时价的模型标「峰谷同价」，价表里查不到的模型标
+「按用量计费」。
+
+**实测效率**（不依赖目录价，永远可用）：每个模型聚合出缓存命中率
+（cached ÷ input）、实测每百万 token 成本（usage_usd ÷ tokens × 1M）、单请求成本
+与平均输出，可以拿它对照目录价判断「贵不贵」。
+
+明细里的消费展示合并成一张图：**按天一根柱、柱内按模型分段堆叠并着色**（数据就是
+usage 日桶自带的 `group_by=model` 分组，不额外打接口；颜色取主题状态色），
+图例即模型清单——每行带 token、缓存命中率与实测单价，图例之外的模型统一进灰色
+「其它」段。占比可视化**直接长在图例行里**：每行模型背后铺一条半透明模型色
+背景条（宽度 = 该模型费用占比，零费用不铺），文字浮在条上——没有独立的占比条。
+
+三个交互：
+
+- **点选柱子**：单击选中一天、再点取消、可多选（悬浮提示里有「· 点击选中」）。
+  选中若干天后，图例行、占比条与「其它」都**只统计选中的天**（客户端现场聚合
+  日桶自带的分组，效率指标在聚合总量上重算），章节标题变成「模型消费 · 已选
+  N 天」，并出现「清除选择」；清除后回到整期视图。明细里其它的周期级数据
+  （额度、token、预测）不受选中影响。
+- **其它可展开**：图例只显示前 6 名；第 7–10 名由 host 半整行下发
+  （`byModelOther`），「+N 个其它模型，合计 X」现在是可点的说明，展开后逐行
+  显示这些具名模型（含完整效率行）；末端补一行「其它（Ollama 未细分）」——
+  usage 的 remainder 没有按名分桶，这一项只能给总额（选中天数的视图里同样处理）。
+- **右窗页签**：见下一节。
+
+### 右侧窗口查看完整明细
+
+明细内容多了，条内展开放不下时可以开进 DSH 的右窗：额度条标题栏最右有一个
+「在右侧窗口打开」按钮（`dock.openPanel`），点击通过 `ctx.sidebarRight.openTab`
+在**右侧窗口**开一个「Ollama 额度」页签；页签是幂等的，重复点击只会聚焦已有页签。
+页签体复用同一份 `QuotaDetail`（同一 store、同一份文案），只是容器改为占满页签
+的宽幅滚动区：明细分节不设高度上限、图表加高、柱子限宽 34px。
+
+注册面：`ctx.sidebarRightTabs.register({ id, kind: "ollama-quota", priority:
+"extension", title, guide })` + `sidebar.right.pane.tab` 槽位（键 = 页签实现 id）。
+发行形态没有 `ui-sidebar-right` 时**静默降级**——两个服务都不注入，只有条内
+展开（打开按钮也不会渲染），插件行为与旧版一致。
 
 供应商预置同理：启动时若解析不到 `ollama`，就把 `lib/preset.js` 写进 settings 层。
 **幂等**（已存在就一个字不写）、**可关**（`provisionProvider: false`）、**不致命**
@@ -147,6 +199,7 @@ host 半用 profile 里的 `OLLAMA_API_KEY` 并发抓这三个接口，压成 60
 | `refreshMs` | `60000` | 服务端缓存 TTL，也是浏览器轮询下限（不短于 15s）。 |
 | `timeoutMs` | `8000` | 单次上游请求超时。 |
 | `paceWarnPct` | `5` | 节奏容差（百分点）：`已用% - 时间进度%` 超过它才算「用快了」。 |
+| `priceTtlMs` | `43200000`（12h） | 模型价目表缓存。上游没有价格 JSON 接口，价表抓自 pricing 页 HTML，改价频率低。 |
 
 ## 只读端点
 
@@ -157,7 +210,10 @@ host 半用 profile 里的 `OLLAMA_API_KEY` 并发抓这三个接口，压成 60
   "ok": true, "providers": ["ollama"], "plan": "pro",
   "totalUsd": 60, "remainingUsd": 59.76, "usedPct": 0.0039,
   "period": { "until": "…", "remainingDays": 30.93, "elapsedPct": 0.0022 },
+  "peak": { "tier": "off-peak", "nextChangeAt": "…", "nextChangeInMs": 18877470 },
+  "pricing": { "fetchedAt": "…", "models": { "deepseek-v4.1-flash": { "input": 0.3, "cached": 0.006, "output": 1.2, "offPeak": { "input": 0.15, "cached": 0.003, "output": 0.6 } } } },
   "tokens": { "requests": 289, "totalTokens": 24562070, "costUsd": 0.2356 },
+  "byModel": [{ "model": "deepseek-v4.1-flash:1017", "costUsd": 5.9, "cacheHitRate": 0.976, "actualUsdPer1M": 0.53, "price": { "input": 0.15, "cached": 0.003, "output": 0.6, "tier": "off-peak", "hasOffPeak": true } }],
   "daily": [{ "from": "…", "costUsd": 0.24, "requests": 289, "partial": true }],
   "pace": { "verdict": "on-track", "burnPerDayUsd": 3.4, "runwayDays": 17.6, "exhaustsBeforeRenewal": false }
 }
@@ -219,9 +275,9 @@ ln -s ~/.dsh/profiles/node_modules ~/src/dsh-ollama-quota/node_modules   # 让 p
 
 ```bash
 npm test                     # 单测 + 客户端冒烟（CI 跑这个）
-node --test test/*.test.mjs  # 24 个：metrics 11 + 供应商预置 5 + 端点准入 6 + 打包 2
+node --test test/*.test.mjs  # 36 个：metrics 15 + 价表/峰谷 8 + 供应商预置 5 + 端点准入 6 + 打包 2
 node test/host.smoke.mjs     # 打真实 Ollama 接口（读 ~/.dsh/.credentials.yaml 的 key）
-node test/client.smoke.mjs   # 浏览器 bundle 冒烟：loader 契约 / 闸门 / 折叠展开 / 错误态
+node test/client.smoke.mjs   # 浏览器 bundle 冒烟：loader 契约 / 闸门 / 右窗页签 / 折叠展开 / 明细区块 / 错误态
 ```
 
 预设数据由 `tools/generate-preset.mjs` 从 `/api/show` 生成（`capabilities`、

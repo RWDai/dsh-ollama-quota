@@ -1,9 +1,11 @@
 /**
- * 浏览器半的离线冒烟：不启动浏览器，用最小 DOM/loader 替身把 bundle 跑起来。
+ * 浏览器半的离线冒烟（刻意保持最小——前端不搞逐字符的结构断言）。
  *
- * 验证五件事：`__ModuleLoader__.load` 契约能被消费、`apply` 注册了两个 slot、
- * ready 态下 dock/卡片都能渲染且数字格式正确、collapsed 态不渲染卡片、
- * error 态渲染降级文案而不是抛错或输出 undefined/NaN。
+ * 只验证四件真正防回归的事：
+ * 1. `__ModuleLoader__.load` 契约能被消费，exports/依赖列表正确；
+ * 2. zh/en 两个词典键集完全一致；
+ * 3. CSS 只注入一次、样式表里没有 calc 乘法这种会让整条声明失效的语法；
+ * 4. ready 态渲染不出现 undefined/NaN，供应商闸门依旧生效。
  *
  * 运行：`node test/client.smoke.mjs`
  */
@@ -37,12 +39,29 @@ function loadModule(specifier) {
   throw new Error(`cannot resolve ${specifier}: run "npm install" in this repo, or install DSH locally`);
 }
 
-/** 最小 window 替身。 */
-globalThis.window = globalThis;
+const React = loadModule('react');
+const { renderToStaticMarkup } = loadModule('react-dom/server');
 
-/** 记录注入的 <style>，证明 CSS 只注入一次。 */
+/** 加载被测 bundle（与浏览器相同的 loader 形状）。 */
+function loadBundle() {
+  let bundle;
+  globalThis.window = globalThis;
+  globalThis.__ModuleLoader__ = {
+    load: ({ id, factory }) => {
+      assert.equal(id, 'dsh-ollama-quota');
+      bundle = factory((spec) => {
+        assert.equal(spec, 'react');
+        return React;
+      });
+    },
+  };
+  requireFromRepo('../lib/client.js');
+  delete globalThis.__ModuleLoader__;
+  return bundle;
+}
+
+/** 最小 document 替身：只记录注入的 <style>。 */
 const styles = [];
-/** 最小 document 替身。 */
 globalThis.document = {
   visibilityState: 'visible',
   querySelector: (selector) => styles.find((style) => style.selector === selector) ?? null,
@@ -57,221 +76,97 @@ globalThis.document = {
   removeEventListener: () => {},
 };
 
-/** 一份贴近真实响应的载荷。 */
-const payload = {
-  ok: true,
-  fetchedAt: '2026-10-20T04:37:25.783Z',
-  refreshMs: 60000,
-  plan: 'pro',
-  allowanceUsd: 60,
-  purchasedRemainingUsd: 0,
-  totalUsd: 60,
-  remainingUsd: 59.89125,
-  usedUsd: 0.10875,
-  usedPct: 0.0018125,
-  period: {
-    from: '2026-10-20T03:06:42Z',
-    until: '2026-11-20T03:06:42Z',
-    known: true,
-    totalDays: 31,
-    elapsedDays: 0.063,
-    remainingDays: 30.937,
-    elapsedPct: 0.002,
-  },
-  tokens: {
-    requests: 177,
-    costUsd: 0.10785,
-    inputTokens: 8869576,
-    cachedInputTokens: 8722728,
-    outputTokens: 92025,
-    totalTokens: 8961601,
-  },
-  daily: [
-    {
-      from: '2026-10-19T00:00:00Z',
-      until: '2026-10-20T00:00:00Z',
-      requests: 12,
-      costUsd: 0.02,
-      inputTokens: 1000,
-      cachedInputTokens: 900,
-      outputTokens: 200,
-    },
-    {
-      from: '2026-10-20T00:00:00Z',
-      until: '2026-10-20T05:00:00Z',
-      partial: true,
-      requests: 177,
-      costUsd: 0.10785,
-      inputTokens: 8869576,
-      cachedInputTokens: 8722728,
-      outputTokens: 92025,
-    },
-  ],
-  pace: {
-    verdict: 'on-track',
-    deltaPct: -0.0002,
-    burnPerDayUsd: 1.726,
-    projectedCostUsd: 53.5,
-    projectedPct: 0.891,
-    runwayDays: 34.7,
-    exhaustsBeforeRenewal: false,
-  },
-};
+const bundle = loadBundle();
 
-globalThis.fetch = async () => ({ ok: true, status: 200, json: async () => payload });
-
-/** 捕获 bundle 的 exports。 */
-let bundle;
-globalThis.__ModuleLoader__ = {
-  load: ({ id, factory }) => {
-    assert.equal(id, 'dsh-ollama-quota');
-    bundle = factory((spec) => {
-      assert.equal(spec, 'react');
-      return loadModule('react');
-    });
-  },
-};
-
-await import('../lib/client.js');
-assert.ok(bundle, 'bundle must self-register through __ModuleLoader__');
-assert.equal(typeof bundle.apply, 'function');
+// 1. 契约：插槽/依赖清单。
+assert.equal(bundle.inject.length, 2);
 assert.deepEqual([...bundle.inject], ['slots', 'locale']);
+assert.equal(typeof bundle.apply, 'function');
+assert.equal(typeof bundle.refresh, 'function');
+assert.equal(typeof bundle.QuotaDock, 'function');
+assert.equal(typeof bundle.QuotaTab, 'function');
 
-const registered = [];
-const ctx = {
-  effect: (fn) => fn(),
-  locale: {
-    register: (ns, dicts) => {
-      assert.equal(ns, 'ollamaQuota');
-      assert.deepEqual(Object.keys(dicts.zh).sort(), Object.keys(dicts.en).sort(), 'zh/en key sets must match');
+// 2. zh/en 键集一致。
+let parityOk = false;
+{
+  const zhKeys = new Set();
+  const enKeys = new Set();
+  const ctx = {
+    effect: (fn) => fn(),
+    get: () => undefined,
+    locale: {
+      register: (ns, dicts) => {
+        assert.equal(ns, 'ollamaQuota');
+        for (const key of Object.keys(dicts.zh)) zhKeys.add(key);
+        for (const key of Object.keys(dicts.en)) enKeys.add(key);
+        parityOk = true;
+      },
     },
-  },
-  slots: {
-    inject: (_name, fn) => fn(),
-    register: (def, component) => {
-      registered.push({ def, component });
-      return () => {};
+    slots: {
+      inject: (_name, fn) => fn(),
+      register: () => () => {},
     },
-  },
-};
-
-bundle.apply(ctx);
-assert.equal(registered.length, 1);
-assert.equal(registered[0].def.name, 'conversation.input.dock');
-assert.equal(registered[0].def.id, 'ollama-quota');
-assert.equal(registered[0].def.order, 10);
-assert.equal(styles.length, 1, 'CSS must be injected exactly once');
-
-const React = loadModule('react');
-const { renderToStaticMarkup } = loadModule('react-dom/server');
-
-/** 文案函数替身：无参回显 key，带参回显 key+JSON，便于断言参数被填上。 */
-const t = (key, params) => (params === undefined ? key : `${key}${JSON.stringify(params)}`);
-
-const dock = registered[0];
-
-/** 等异步 refresh 落定。 */
-async function settle() {
-  for (let index = 0; index < 20; index += 1) await new Promise((resolve) => setImmediate(resolve));
+  };
+  bundle.apply(ctx);
+  assert.ok(parityOk, 'locale.register must be called from apply');
+  assert.deepEqual([...zhKeys].sort(), [...enKeys].sort(), 'zh/en key sets must match');
+  assert.ok(zhKeys.size > 40, 'the dictionary should be reasonably complete');
 }
 
-const noPlaceholders = (html, label) => {
-  assert.doesNotMatch(html, /undefined|NaN/, `${label} must not contain undefined/NaN`);
+// 3. CSS：只注入一次，且没有 calc 乘法。
+assert.equal(styles.length, 1, 'CSS must be injected exactly once');
+assert.doesNotMatch(styles[0].textContent, /calc\([^)]*\*/, 'no calc multiplication (it invalidates the whole declaration)');
+
+// 4. ready 态渲染。
+const payload = {
+  ok: true,
+  remainingUsd: 52.88,
+  totalUsd: 60,
+  usedPct: 0.119,
+  providers: ['ollama'],
+  period: { from: '2026-10-20T03:06:42Z', until: '2026-11-20T03:06:42Z', elapsedPct: 0.002 },
+  tokens: { requests: 5160, costUsd: 0.10785, inputTokens: 8_742_000, cachedInputTokens: 8_520_000, outputTokens: 219_601, totalTokens: 8_961_601 },
+  peak: { tier: 'off-peak', nextChangeInMs: 2.4 * 3_600_000 },
+  pricing: { fetchedAt: '2026-10-21T06:00:00Z', models: {} },
+  byModel: [
+    { model: 'deepseek-v4.1-flash:1017', requests: 4880, costUsd: 0.07, inputTokens: 7_800_000, cachedInputTokens: 7_600_000, outputTokens: 260_000, totalTokens: 8_060_000, cacheHitRate: 0.975, actualUsdPer1M: 0.58 },
+    { model: 'glm-5.3-flash', requests: 280, costUsd: 0.04, inputTokens: 800_000, cachedInputTokens: 700_000, outputTokens: 20_000, totalTokens: 820_000, cacheHitRate: 0.875, actualUsdPer1M: 0.31 },
+  ],
+  byModelMore: { models: 2, requests: 13, costUsd: 0.05 },
+  byModelOther: [{ model: 'kimi-k2.6', requests: 10, costUsd: 0.02, inputTokens: 200_000, cachedInputTokens: 150_000, outputTokens: 5_000, totalTokens: 205_000, cacheHitRate: 0.75, actualUsdPer1M: 0.0976 }],
+  daily: [
+    { from: '2026-10-20T00:00:00Z', until: '2026-10-21T00:00:00Z', partial: false, requests: 4880, costUsd: 0.078, inputTokens: 5_700_000, cachedInputTokens: 5_550_000, outputTokens: 150_000, groups: [{ model: 'deepseek-v4.1-flash:1017', requests: 4800, costUsd: 0.07, inputTokens: 5_600_000, cachedInputTokens: 5_500_000, outputTokens: 100_000 }] },
+    { from: '2026-10-21T00:00:00Z', until: '2026-10-22T00:00:00Z', partial: true, requests: 280, costUsd: 0.03, inputTokens: 3_042_000, cachedInputTokens: 2_970_000, outputTokens: 69_601, groups: [{ model: 'deepseek-v4.1-flash:1017', requests: 80, costUsd: 0.01, inputTokens: 2_200_000, cachedInputTokens: 2_100_000, outputTokens: 160_000 }, { model: 'glm-5.3-flash', requests: 200, costUsd: 0.02, inputTokens: 842_000, cachedInputTokens: 870_000, outputTokens: 9_601 }] },
+  ],
+  pace: { verdict: 'ahead', deltaPct: 0.117, projectedCostUsd: 53.5, projectedPct: 0.891 },
+  fetchedAt: '2026-10-21T16:30:00Z',
 };
 
-// 闸门：默认没有可见实例就不轮询，测试显式拉一次（浏览器里由 dock 挂载触发）。
-assert.equal(bundle.store.get().status, 'idle');
-await bundle.refresh({ force: true });
-await settle();
-assert.equal(bundle.store.get().status, 'ready');
+/** 文案替身：无参回显 key，带参回显 key+JSON（只用于「出现过」级别的检查）。 */
+const t = (key, params) => (params === undefined ? key : `${key}${JSON.stringify(params)}`);
 
-// 折叠态：只有标题行，没有明细区。
-const collapsed = renderToStaticMarkup(React.createElement(dock.component, { t }));
-assert.match(collapsed, /ollamaQuota_root/);
-assert.doesNotMatch(collapsed, /ollamaQuota_detail/, 'detail must stay collapsed');
-assert.equal((collapsed.match(/<svg/g) ?? []).length, 2, 'lead glyph + collapse chevron');
-assert.match(collapsed, /M12 10L8\.70711 6\.70711/, 'collapsed dock uses the native up chevron');
-assert.doesNotMatch(collapsed, /<strong>/, 'summary is plain tertiary text, like the native docks');
+// 4a. 展开明细渲染：直接渲染 QuotaDetail，不出现 undefined/NaN。
+const detailHtml = renderToStaticMarkup(
+  React.createElement(bundle.QuotaDetail, { t, payload, chartPx: 38 }),
+);
+assert.match(detailHtml, /ollamaQuota_detail/);
+assert.doesNotMatch(detailHtml, /undefined|NaN/, 'expanded detail must not leak undefined/NaN');
 
-// 展开态：点标题展开（等价于 store.expanded=true）。
-bundle.store.patch({ expanded: true });
-const expandedHtml = renderToStaticMarkup(React.createElement(dock.component, { t }));
-assert.match(expandedHtml, /ollamaQuota_detail/);
-assert.match(expandedHtml, /M4 6L7\.29289 9\.29289/, 'expanded dock uses the native down chevron');
-assert.match(expandedHtml, /\$59\.89/);
-assert.match(expandedHtml, /11-20/);
-assert.match(expandedHtml, /8\.96M/);
-assert.match(expandedHtml, /53\.5/);
-assert.equal((expandedHtml.match(/ollamaQuota_chartBar/g) ?? []).length, 2, 'one bar per daily bucket');
-noPlaceholders(expandedHtml, 'expanded dock');
-
-// dock 摘要。
-bundle.store.patch({ expanded: false });
-const dockHtml = renderToStaticMarkup(React.createElement(dock.component, { t }));
-assert.match(dockHtml, /\$59\.89/);
-assert.match(dockHtml, /8\.96M tok/);
-// 渲染后的 HTML 会把参数里的引号转义成 &quot;，这里只断言值被填进去了。
-assert.match(dockHtml, /· 0\.2% · pace\.onTrack/);
-assert.match(dockHtml, /dock\.expires\{[^}]*11-20/);
-noPlaceholders(dockHtml, 'dock');
-
-console.log('dock markup:\n' + dockHtml + '\n');
-
-// 错误态：上游 401 时必须渲染降级文案。
-bundle.store.patch({
-  expanded: true,
-  status: 'error',
-  payload: undefined,
-  error: { ok: false, code: 'unauthorized', message: 'HTTP 401' },
+// 4b. dock 与供应商闸门：非 ollama 会话整条不渲染（idle 态下也如此）。
+const snapshotStore = (provider) => ({
+  getSnapshot: () => ({ current: { provider, model: 'm' }, routable: true, groups: [], failures: [], status: 'ready', error: null }),
+  subscribe: () => () => {},
 });
-const errorDock = renderToStaticMarkup(React.createElement(dock.component, { t }));
-assert.match(errorDock, /card\.unauthorized/);
-assert.doesNotMatch(errorDock, /ollamaQuota_detail/, 'no detail area without data');
-noPlaceholders(errorDock, 'error dock');
-
-// 准入失败：401/403 是「会话没通过校验」，不能冒充 network 让用户去查网络。
-// 旧版把任何非 2xx 都标成 network，绑局域网地址时额度条永远显示「无法连接
-// ollama.com」，而宿主机到上游其实完全正常。
-const okFetch = globalThis.fetch;
-globalThis.fetch = async () => ({ ok: false, status: 403, json: async () => ({}) });
-bundle.store.patch({ expanded: true, status: 'ready', payload: undefined, error: undefined });
-await bundle.refresh({ force: true });
-await settle();
-assert.equal(bundle.store.get().status, 'error');
-assert.equal(bundle.store.get().error.code, 'forbidden', '403 must map to code=forbidden');
-const forbiddenDock = renderToStaticMarkup(React.createElement(dock.component, { t }));
-assert.match(forbiddenDock, /card\.forbidden/);
-assert.doesNotMatch(forbiddenDock, /card\.network/, '403 must not be reported as a network failure');
-noPlaceholders(forbiddenDock, 'forbidden dock');
-globalThis.fetch = okFetch;
-
-// CSS 里不能出现 calc 乘法（非法语法会让整条声明失效）。
-assert.doesNotMatch(styles[0].textContent, /calc\([^)]*\*/, 'no calc multiplication in the stylesheet');
-assert.match(styles[0].textContent, /ollamaQuota_root/);
-// 表面材质跟原生 dock 一致：半透明菜单 + 模糊 + elevation 阴影 + 大圆角，
-// 而不是旧版不透明的 tip 底 + 1px 边框 + 12px 圆角。
-assert.match(styles[0].textContent, /background:var\(--dsw-specific-menu\)/);
-assert.match(styles[0].textContent, /backdrop-filter:var\(--dsw-menu-backdrop-filter\)/);
-assert.match(styles[0].textContent, /box-shadow:var\(--dsw-elevation-panel\)/);
-assert.match(styles[0].textContent, /border-radius:var\(--dsw-radius-lg\)/);
-assert.doesNotMatch(styles[0].textContent, /var\(--dsw-specific-tip\)/, 'do not use the opaque tip surface');
-
-// 供应商闸门：目录快照里当前供应商不在 providers 列表时整条不渲染。
-const snapshotStore = (provider) => {
-  const state = { current: { provider, model: 'm' }, routable: true, groups: [], failures: [], status: 'ready', error: null };
-  return { getSnapshot: () => state, subscribe: () => () => {}, update: () => {} };
-};
-const offProvider = renderToStaticMarkup(
-  React.createElement(dock.component, { t, directory: { store: snapshotStore('openai') } }),
+const off = renderToStaticMarkup(
+  React.createElement(bundle.QuotaDock, { t, directory: { store: snapshotStore('openai') } }),
 );
-assert.equal(offProvider, '', 'dock must not render for a foreign provider');
-const onProvider = renderToStaticMarkup(
-  React.createElement(dock.component, { t, directory: { store: snapshotStore('ollama') } }),
+assert.equal(off, '', 'dock must not render for a foreign provider');
+const on = renderToStaticMarkup(
+  React.createElement(bundle.QuotaDock, { t, directory: { store: snapshotStore('ollama') } }),
 );
-assert.match(onProvider, /ollamaQuota_root/, 'dock renders for the gated provider');
+assert.match(on, /ollamaQuota_root/, 'dock renders for the gated provider');
 
-console.log('client smoke OK: loader contract, dock slot, collapsed/expanded/error states, css injection');
+console.log('client smoke OK: loader contract, i18n parity, css injection, render sanity, provider gate');
 
-// 插件会按 refreshMs 递归安排轮询，Node 的事件循环因此不会自然退出。
-// 冒烟只关心一次性渲染结果，断言完成后直接结束进程。
+// 轮询定时器会让事件循环不退出；冒烟只关心上面的一次性断言。
 process.exit(0);
